@@ -7,6 +7,7 @@ import SMCPanel from "../components/SMCPanel";
 import SignalLog from "../components/SignalLog";
 import OpenPositions from "../components/OpenPositions";
 import StrategyConfigPanel from "../components/StrategyConfigPanel";
+import PortfolioStats from "../components/PortfolioStats";
 import { useWebSocket, MarketEvent } from "../hooks/useWebSocket";
 
 export default function Dashboard() {
@@ -55,6 +56,7 @@ export default function Dashboard() {
             <OpenPositions refreshTrigger={tradeRefreshTick} />
           </div>
           <div className="space-y-4">
+            <PortfolioStats refreshTick={tradeRefreshTick} />
             <SMCPanel
               smc={latestMarket?.smc}
               ai={latestMarket?.ai}

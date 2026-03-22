@@ -23,6 +23,7 @@ from .api.signals import router as signals_router
 from .api.settings import router as settings_router
 from .api.strategies import router as strategies_router
 from .api.trades import router as trades_router
+from .api.portfolio import router as portfolio_router
 from .api.websocket import manager
 from .notifications.telegram import TelegramNotifier
 
@@ -120,6 +121,7 @@ app.include_router(signals_router)
 app.include_router(settings_router)
 app.include_router(strategies_router)
 app.include_router(trades_router)
+app.include_router(portfolio_router)
 
 
 # ─────────────────── WebSocket ───────────────────

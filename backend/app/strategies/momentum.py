@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import List
 import pandas as pd
 
-from .base import BaseStrategy, OrderSignal
+from .base import BaseStrategy, OrderSignal, PartialTPLevel
 from ..core.smc import SMCResult
 
 
@@ -22,6 +22,8 @@ class MomentumStrategy(BaseStrategy):
         "atr_tp_mult": 2.0,
         "atr_sl_mult": 1.5,
         "cooldown_bars": 5,
+        "use_partial_tp": True,
+        "trailing_stop": True,
     }
 
     def __init__(
@@ -35,6 +37,8 @@ class MomentumStrategy(BaseStrategy):
         atr_tp_mult: float = 2.0,
         atr_sl_mult: float = 1.5,
         cooldown_bars: int = 5,
+        use_partial_tp: bool = True,
+        trailing_stop: bool = True,
     ) -> None:
         super().__init__(symbol, base_lot)
         self.fast_ema = fast_ema
@@ -44,6 +48,8 @@ class MomentumStrategy(BaseStrategy):
         self.atr_tp_mult = atr_tp_mult
         self.atr_sl_mult = atr_sl_mult
         self.cooldown_bars = cooldown_bars
+        self.use_partial_tp = use_partial_tp
+        self.trailing_stop = trailing_stop
 
         self._last_signal_bar: int = -cooldown_bars
         self._bar_count: int = 0
@@ -87,8 +93,9 @@ class MomentumStrategy(BaseStrategy):
 
         # Bullish: EMA crossover + RSI > rsi_bull + SMC bias bullish
         if bullish_cross and rsi >= self.rsi_bull and smc.bias != "BEARISH":
-            tp = current_price + atr * self.atr_tp_mult
             sl = current_price - atr * self.atr_sl_mult
+            tp = current_price + atr * self.atr_tp_mult if not self.use_partial_tp else None
+            partial_tps = self.build_partial_tps("BUY", current_price, sl, atr) if self.use_partial_tp else []
             self._last_signal_bar = self._bar_count
             signals.append(
                 OrderSignal(
@@ -99,13 +106,16 @@ class MomentumStrategy(BaseStrategy):
                     stop_loss=sl,
                     take_profit=tp,
                     reason=f"Bullish EMA cross RSI={rsi:.0f}",
+                    partial_tps=partial_tps,
+                    atr=atr,
                 )
             )
 
         # Bearish: EMA crossover + RSI < rsi_bear + SMC bias bearish
         elif bearish_cross and rsi <= self.rsi_bear and smc.bias != "BULLISH":
-            tp = current_price - atr * self.atr_tp_mult
             sl = current_price + atr * self.atr_sl_mult
+            tp = current_price - atr * self.atr_tp_mult if not self.use_partial_tp else None
+            partial_tps = self.build_partial_tps("SELL", current_price, sl, atr) if self.use_partial_tp else []
             self._last_signal_bar = self._bar_count
             signals.append(
                 OrderSignal(
@@ -116,6 +126,8 @@ class MomentumStrategy(BaseStrategy):
                     stop_loss=sl,
                     take_profit=tp,
                     reason=f"Bearish EMA cross RSI={rsi:.0f}",
+                    partial_tps=partial_tps,
+                    atr=atr,
                 )
             )
 

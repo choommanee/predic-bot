@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import List
 import pandas as pd
 
-from .base import BaseStrategy, OrderSignal
+from .base import BaseStrategy, OrderSignal, PartialTPLevel
 from ..core.smc import SMCResult
 
 
@@ -17,11 +17,13 @@ class SMCStrategy(BaseStrategy):
 
     DEFAULT_PARAMS = {
         "min_bos_count": 1,
-        "ob_proximity_pct": 0.3,    # % tolerance around OB boundary
+        "ob_proximity_pct": 0.3,
         "atr_tp_mult": 2.0,
         "atr_sl_mult": 1.0,
         "cooldown_bars": 10,
-        "require_mtf_align": False,  # if True, only trade when 4H+15m aligned
+        "require_mtf_align": False,
+        "use_partial_tp": True,     # ← partial TP: 50% at 1R, 50% at 2R
+        "trailing_stop": True,      # ← hand off to TrailingStopManager
     }
 
     def __init__(
@@ -34,6 +36,8 @@ class SMCStrategy(BaseStrategy):
         atr_sl_mult: float = 1.0,
         cooldown_bars: int = 10,
         require_mtf_align: bool = False,
+        use_partial_tp: bool = True,
+        trailing_stop: bool = True,
     ) -> None:
         super().__init__(symbol, base_lot)
         self.min_bos_count = min_bos_count
@@ -42,6 +46,8 @@ class SMCStrategy(BaseStrategy):
         self.atr_sl_mult = atr_sl_mult
         self.cooldown_bars = cooldown_bars
         self.require_mtf_align = require_mtf_align
+        self.use_partial_tp = use_partial_tp
+        self.trailing_stop = trailing_stop
 
         self._bar_count = 0
         self._last_signal_bar = -cooldown_bars
@@ -111,6 +117,14 @@ class SMCStrategy(BaseStrategy):
                 self._last_signal_bar = self._bar_count
                 self._last_ob_used = ob_id
 
+                # Build partial TP levels if enabled
+                partial_tps = (
+                    self.build_partial_tps(direction, current_price, sl, atr)
+                    if self.use_partial_tp else []
+                )
+                # Full TP = 2R (fallback if partial TPs not used)
+                full_tp = tp if not self.use_partial_tp else None
+
                 signals.append(
                     OrderSignal(
                         strategy=self.name,
@@ -118,8 +132,10 @@ class SMCStrategy(BaseStrategy):
                         quantity=self.base_lot,
                         entry_price=current_price,
                         stop_loss=sl,
-                        take_profit=tp,
+                        take_profit=full_tp,
                         reason=f"SMC {ob_type} OB test BOS={smc.bullish_bos if direction=='BUY' else smc.bearish_bos}",
+                        partial_tps=partial_tps,
+                        atr=atr,
                     )
                 )
                 break  # one signal per evaluation
