@@ -52,8 +52,15 @@ async def get_balance(engine=Depends(get_engine)):
 
 @router.get("/ohlcv")
 async def get_ohlcv(timeframe: str = "1m", limit: int = 100, engine=Depends(get_engine)):
-    df = await engine.exchange.fetch_ohlcv(engine.symbol, timeframe, limit)
-    df.reset_index(inplace=True)
+    # Use cached 1m data when possible, otherwise fetch from Binance
+    if timeframe == "1m" and engine._cached_df is not None:
+        df = engine._cached_df.tail(limit).copy()
+    else:
+        df = await engine.exchange.fetch_ohlcv(engine.symbol, timeframe, limit)
+    df = df.reset_index()
+    # Ensure timestamp is serializable
+    if "timestamp" in df.columns:
+        df["timestamp"] = df["timestamp"].astype(str)
     return df.to_dict(orient="records")
 
 

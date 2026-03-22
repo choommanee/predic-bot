@@ -129,12 +129,11 @@ class PaperBinanceClient(BinanceClient):
         self._paper_balance = {"total": 10000.0, "free": 10000.0, "used": 0.0}
         self._paper_positions: List[dict] = []
 
-        options: dict[str, Any] = {"defaultType": "future"}
+        # Public-only exchange (no API keys) — used only for market data (OHLCV, ticker)
+        # Binance rejects requests with invalid API keys even on public endpoints
         self._exchange = ccxt.binance(
             {
-                "apiKey": api_key or "paper",
-                "secret": secret_key or "paper",
-                "options": options,
+                "options": {"defaultType": "future"},
                 "enableRateLimit": True,
             }
         )
