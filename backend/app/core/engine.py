@@ -21,6 +21,9 @@ from ..strategies.base import OrderSignal
 from ..strategies.martingale import MartingaleStrategy
 from ..strategies.grid import GridStrategy
 from ..strategies.momentum import MomentumStrategy
+from ..core.mtf import get_mtf_context, MTFContext
+from ..core.signal_aggregator import aggregate, AggregatedSignal
+from ..core.regime import classify, MarketRegime
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +87,11 @@ class TradingEngine:
         self._cached_smc: Any = None
         self._last_price: float = 0.0
         self._last_event: dict | None = None  # cached for immediate send on WS connect
+        self._mtf_context: MTFContext | None = None
+        self._regime: MarketRegime | None = None
+        self._agg_signal: AggregatedSignal | None = None
+        self._mtf_last_refresh: float = 0.0
+        MTF_REFRESH_INTERVAL = 300  # 5 minutes
 
     # ─────────────────── Lifecycle ───────────────────
 
@@ -146,6 +154,30 @@ class TradingEngine:
 
                 current_price = float(df["close"].iloc[-1])
 
+                # Refresh MTF every 5 minutes
+                import time
+                now = time.time()
+                if now - self._mtf_last_refresh > 300:
+                    self._mtf_context = await get_mtf_context(
+                        self.exchange, self.symbol, smc_module, ind_module
+                    )
+                    self._mtf_last_refresh = now
+
+                # Classify market regime
+                self._regime = classify(
+                    getattr(self._mtf_context, "smc_4h", None),
+                    self._cached_indicators,
+                )
+
+                # Aggregate signal
+                self._agg_signal = aggregate(
+                    smc_result,
+                    getattr(self._mtf_context, "smc_15m", None),
+                    getattr(self._mtf_context, "smc_4h", None),
+                    indicators,
+                    current_price,
+                )
+
                 # Run Claude AI if enabled and mode allows
                 ai_result = None
                 if self._anthropic_api_key and self.mode in ("auto", "both"):
@@ -192,8 +224,11 @@ class TradingEngine:
     ) -> list[OrderSignal]:
         fired: list[OrderSignal] = []
 
+        active = self._regime.active_strategies if self._regime else list(self.strategies.keys())
         for name, strategy in self.strategies.items():
             if not strategy.state.active:
+                continue
+            if name not in active:
                 continue
             try:
                 signals = await strategy.evaluate(df, smc, indicators, current_price)
@@ -271,6 +306,11 @@ class TradingEngine:
             },
             "indicators": ind,
             "smc_bias": smc.bias if smc else "NEUTRAL",
+            "regime": self._regime.regime if self._regime else "UNKNOWN",
+            "agg_signal": {
+                "direction": self._agg_signal.direction,
+                "score": round(self._agg_signal.score, 3),
+            } if self._agg_signal else None,
         }
         # Merge last market_update so reconnecting clients get full state
         if self._last_event:
@@ -314,4 +354,20 @@ class TradingEngine:
                 for s in signals
             ],
             "ai": ai,
+            "regime": {
+                "type": self._regime.regime,
+                "active_strategies": self._regime.active_strategies,
+                "description": self._regime.description,
+            } if self._regime else None,
+            "mtf": {
+                "bias_4h": self._mtf_context.bias_4h,
+                "structure_15m": self._mtf_context.structure_15m,
+                "aligned": self._mtf_context.aligned,
+            } if self._mtf_context else None,
+            "agg_signal": {
+                "direction": self._agg_signal.direction,
+                "score": round(self._agg_signal.score, 3),
+                "confidence": round(self._agg_signal.confidence, 1),
+                "reasons": self._agg_signal.reasons,
+            } if self._agg_signal else None,
         }

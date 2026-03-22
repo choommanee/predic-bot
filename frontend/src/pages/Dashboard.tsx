@@ -49,7 +49,13 @@ export default function Dashboard() {
             <TradingChart symbol={symbol} />
           </div>
           <div className="space-y-4">
-            <SMCPanel smc={latestMarket?.smc} ai={latestMarket?.ai} />
+            <SMCPanel
+              smc={latestMarket?.smc}
+              ai={latestMarket?.ai}
+              mtf={latestMarket?.mtf}
+              regime={latestMarket?.regime}
+              aggSignal={latestMarket?.agg_signal}
+            />
             <BotControl />
           </div>
         </div>

@@ -79,3 +79,11 @@ class RiskManager:
 
     def record_pnl(self, pnl: float) -> None:
         self.state.record_trade_pnl(pnl)
+
+    def risk_to_qty(self, equity: float, risk_pct: float, entry: float, stoploss: float) -> float:
+        """Jesse-style: size so that SL hit = lose risk_pct% of equity."""
+        if entry <= 0 or stoploss <= 0 or abs(entry - stoploss) < 0.01:
+            return self.base_lot_size
+        risk_dollars = equity * (risk_pct / 100.0)
+        qty = risk_dollars / abs(entry - stoploss)
+        return max(qty, self.base_lot_size)

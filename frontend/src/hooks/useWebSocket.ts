@@ -27,6 +27,22 @@ export interface MarketEvent {
     market_condition: string;
     analysis: string;
   };
+  regime?: {
+    type: string;
+    active_strategies: string[];
+    description: string;
+  };
+  mtf?: {
+    bias_4h: string;
+    structure_15m: string;
+    aligned: boolean;
+  };
+  agg_signal?: {
+    direction: string;
+    score: number;
+    confidence: number;
+    reasons: string[];
+  };
   message?: string;
 }
 

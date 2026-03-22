@@ -12,7 +12,23 @@
       "Bash(git remote:*)",
       "Bash(git push:*)",
       "Bash(npm install:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(RAILWAY_TOKEN=5c8888f4-dda4-4ff7-9953-63ad3108bc40 railway status)",
+      "Bash(RAILWAY_TOKEN=5c8888f4-dda4-4ff7-9953-63ad3108bc40 railway whoami)",
+      "Bash(curl -s -X POST https://backboard.railway.app/graphql/v2 -H \"Authorization: Bearer 5c8888f4-dda4-4ff7-9953-63ad3108bc40\" -H \"Content-Type: application/json\" -d '{\"\"query\"\":\"\"{ me { name email } }\"\"}')",
+      "Bash(RAILWAY_TOKEN=5c8888f4-dda4-4ff7-9953-63ad3108bc40 railway logs)",
+      "Bash(RAILWAY_TOKEN=5c8888f4-dda4-4ff7-9953-63ad3108bc40 railway logs --json)",
+      "Bash(railway version:*)",
+      "Bash(railway --version)",
+      "Bash(python3 -m json.tool)",
+      "Bash(pip install:*)",
+      "Bash(python3 -c \":*)",
+      "Bash(python3 -c \"import json,sys; [print\\(e[''''node''''][''''id''''], e[''''node''''][''''status'''']\\) for e in json.load\\(sys.stdin\\)[''''data''''][''''deployments''''][''''edges''''][:3]]\")",
+      "Bash(PGPASSWORD=WoEcpFJprvXdxPOLROxqRkLEXkMTMHUu psql -h caboose.proxy.rlwy.net -p 49140 -U postgres -d railway -c \":*)",
+      "Bash(python3 -c \"import json,sys; [print\\(e[''''node''''][''''id''''], e[''''node''''][''''status'''']\\) for e in json.load\\(sys.stdin\\)[''''data''''][''''deployments''''][''''edges''''][:2]]\")",
+      "WebSearch",
+      "Bash(python3 -c \"import json,sys; [print\\(e[''''node''''][''''id''''], e[''''node''''][''''status''''], e[''''node''''][''''createdAt'''']\\) for e in json.load\\(sys.stdin\\)[''''data''''][''''deployments''''][''''edges''''][:3]]\")",
+      "Bash(python3 -c \"import json,sys; print\\(json.load\\(sys.stdin\\)\\)\")"
     ]
   }
 }

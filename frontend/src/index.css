@@ -16,10 +16,24 @@
     @apply bg-card rounded-xl border border-border p-4;
   }
   .btn-primary {
-    @apply bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded-lg transition-colors font-medium;
+    @apply bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed
+           text-white px-4 py-2 rounded-lg transition-colors font-medium text-sm;
+  }
+  .btn-secondary {
+    @apply bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed
+           text-slate-100 px-4 py-2 rounded-lg transition-colors font-medium text-sm border border-border;
   }
   .btn-danger {
-    @apply bg-danger/80 hover:bg-danger text-white px-4 py-2 rounded-lg transition-colors font-medium;
+    @apply bg-danger/80 hover:bg-danger text-white px-4 py-2 rounded-lg transition-colors font-medium text-sm;
+  }
+  .input {
+    @apply w-full bg-slate-800 border border-border rounded-lg px-3 py-2
+           text-slate-100 text-sm placeholder-slate-500
+           focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent
+           transition-colors;
+  }
+  select.input {
+    @apply cursor-pointer;
   }
   .badge {
     @apply px-2 py-0.5 rounded text-xs font-semibold;
