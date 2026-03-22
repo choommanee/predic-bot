@@ -54,28 +54,33 @@ telegram: TelegramNotifier | None = None
 async def on_startup():
     global engine, telegram
 
-    await init_db()
-    logger.info("Database initialized")
+    try:
+        await init_db()
+        logger.info("Database initialized")
+    except Exception as exc:
+        logger.error("Database init failed (app will still start): %s", exc)
 
-    telegram = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
+    try:
+        telegram = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
 
-    engine = TradingEngine()
+        engine = TradingEngine()
 
-    # Wire broadcast: WebSocket + Telegram
-    async def broadcast_to_ws(event: dict):
-        await manager.broadcast(event)
+        async def broadcast_to_ws(event: dict):
+            await manager.broadcast(event)
 
-    async def broadcast_to_telegram(event: dict):
-        if event.get("signals"):
-            await telegram.send_signal(event)
-        if event.get("type") == "risk_alert":
-            await telegram.send_risk_alert(event.get("message", ""))
+        async def broadcast_to_telegram(event: dict):
+            if event.get("signals"):
+                await telegram.send_signal(event)
+            if event.get("type") == "risk_alert":
+                await telegram.send_risk_alert(event.get("message", ""))
 
-    engine.add_broadcast_callback(broadcast_to_ws)
-    engine.add_broadcast_callback(broadcast_to_telegram)
+        engine.add_broadcast_callback(broadcast_to_ws)
+        engine.add_broadcast_callback(broadcast_to_telegram)
 
-    await engine.start()
-    logger.info("TradingEngine started")
+        await engine.start()
+        logger.info("TradingEngine started")
+    except Exception as exc:
+        logger.error("TradingEngine init failed (app will still start): %s", exc)
 
 
 @app.on_event("shutdown")
@@ -114,7 +119,11 @@ async def websocket_endpoint(ws: WebSocket):
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "mode": settings.trading_mode}
+    return {
+        "status": "ok",
+        "mode": settings.trading_mode,
+        "engine": engine is not None,
+    }
 
 
 # ─────────────────── Serve React frontend ───────────────────
