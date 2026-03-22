@@ -1,6 +1,6 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "cd frontend && npm ci && npm run build && cp -r dist/* ../backend/app/static/ && cd .. && pip install -r backend/requirements.txt"
+buildCommand = "pip install -r backend/requirements.txt"
 
 [deploy]
 startCommand = "uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT"
