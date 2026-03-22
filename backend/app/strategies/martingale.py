@@ -16,10 +16,11 @@ class MartingaleStrategy(BaseStrategy):
 
     DEFAULT_PARAMS = {
         "multiplier": 1.5,
-        "max_levels": 7,
-        "pip_distance": 30.0,
-        "take_profit_pips": 35.0,
-        "pip_value": 0.01,
+        "max_levels": 6,
+        "pip_distance": 80.0,          # $80 adverse move triggers next level
+        "take_profit_pips": 100.0,     # $100 TP on average entry
+        "pip_value": 1.0,              # BTCUSDT: 1 pip = $1 USDT
+        "require_ob": False,           # Skip strict OB requirement — use direction score only
     }
 
     def __init__(
@@ -27,10 +28,11 @@ class MartingaleStrategy(BaseStrategy):
         symbol: str,
         base_lot: float = 0.001,
         multiplier: float = 1.5,
-        max_levels: int = 7,
-        pip_distance: float = 30.0,   # pip distance between levels
-        take_profit_pips: float = 35.0,
-        pip_value: float = 0.01,      # BTCUSDT: 1 pip = $1
+        max_levels: int = 6,
+        pip_distance: float = 80.0,
+        take_profit_pips: float = 100.0,
+        pip_value: float = 1.0,        # BTCUSDT: 1 pip = $1 USDT
+        require_ob: bool = False,
     ) -> None:
         super().__init__(symbol, base_lot)
         self.multiplier = multiplier
@@ -38,10 +40,12 @@ class MartingaleStrategy(BaseStrategy):
         self.pip_distance = pip_distance
         self.take_profit_pips = take_profit_pips
         self.pip_value = pip_value
+        self.require_ob = require_ob
 
         self._direction: str | None = None
         self._entry_prices: List[float] = []
         self._levels: int = 0
+        self._cooldown: int = 0        # bars before re-entry after reset
 
     def _determine_direction(self, smc: SMCResult, indicators: dict) -> str | None:
         """Use SMC bias + EMA alignment to choose BUY/SELL."""
@@ -89,14 +93,28 @@ class MartingaleStrategy(BaseStrategy):
         if not self.state.active:
             return signals
 
+        # Cooldown after a completed cycle
+        if self._cooldown > 0:
+            self._cooldown -= 1
+            return signals
+
         # No open positions — look for initial entry
         if not self._entry_prices:
             direction = self._determine_direction(smc, indicators)
             if direction is None:
                 return signals
 
-            # Require near Order Block for entry
-            if not check_entry_near_ob(current_price, smc.order_blocks, direction, self.pip_value):
+            # Hard rule: never trade against SMC bias
+            # (avoid going long in a confirmed bearish structure and vice-versa)
+            if smc.bias == "BEARISH" and direction == "BUY":
+                return signals
+            if smc.bias == "BULLISH" and direction == "SELL":
+                return signals
+
+            # Optional: also require near Order Block for higher-quality entries
+            if self.require_ob and not check_entry_near_ob(
+                current_price, smc.order_blocks, direction, self.pip_value
+            ):
                 return signals
 
             self._direction = direction
@@ -154,19 +172,33 @@ class MartingaleStrategy(BaseStrategy):
 
         return signals
 
+    def on_close(self, pnl: float) -> None:
+        """Called when any position in this strategy closes."""
+        super().on_close(pnl)
+        # Remove one entry price level — if all closed, reset cycle + cooldown
+        if self._entry_prices:
+            self._entry_prices.pop()
+        if not self._entry_prices:
+            self._direction = None
+            self._levels = 0
+            self._cooldown = 10   # 10-bar cooldown before re-entry
+
     def reset(self) -> None:
         self._direction = None
         self._entry_prices = []
         self._levels = 0
+        self._cooldown = 0
 
     def dump_state(self) -> dict:
         return {
             "direction": self._direction,
             "entry_prices": self._entry_prices,
             "levels": self._levels,
+            "cooldown": self._cooldown,
         }
 
     def load_state(self, state: dict) -> None:
         self._direction = state.get("direction")
         self._entry_prices = state.get("entry_prices", [])
         self._levels = state.get("levels", 0)
+        self._cooldown = state.get("cooldown", 0)

@@ -162,7 +162,7 @@ def calculate_supertrend(
     return supertrend, direction
 
 
-def compute_all(df: pd.DataFrame) -> dict:
+def compute_all(df: pd.DataFrame, bar_minutes: int = 15) -> dict:
     """Compute all indicators at once and return as dict of latest values + arrays."""
     close = df["close"].values.astype(float)
     high = df["high"].values.astype(float)
@@ -171,15 +171,31 @@ def compute_all(df: pd.DataFrame) -> dict:
     ema8 = calculate_ema(close, 8)
     ema21 = calculate_ema(close, 21)
     ema55 = calculate_ema(close, 55)
+    ema200 = calculate_ema(close, 200)
     rsi14 = calculate_rsi(close, 14)
     atr14 = calculate_atr(high, low, close, 14)
     adx14, plus_di, minus_di = calculate_adx(high, low, close, 14)
     st, st_dir = calculate_supertrend(high, low, close)
 
+    # Volume array (raw from df if available)
+    volume = df["volume"].values.astype(float) if "volume" in df.columns else np.ones(len(close))
+
+    # Dynamic macro trend — adapts to bar_minutes (5m, 15m, 1h etc.)
+    bars_per_day = int(24 * 60 / bar_minutes)
+    lookback_7d  = bars_per_day * 7   # e.g. 2016 for 5m, 672 for 15m
+    lookback_3d  = bars_per_day * 3   # e.g. 864 for 5m,  288 for 15m
+
+    macro_close_7d_ago = float(close[-lookback_7d]) if len(close) >= lookback_7d else float(close[0])
+    macro_trend_7d     = int(np.sign(float(close[-1]) - macro_close_7d_ago))
+
+    macro_close_3d_ago = float(close[-lookback_3d]) if len(close) >= lookback_3d else float(close[0])
+    macro_trend_3d     = int(np.sign(float(close[-1]) - macro_close_3d_ago))
+
     return {
         "ema8": ema8,
         "ema21": ema21,
         "ema55": ema55,
+        "ema200": ema200,
         "rsi": rsi14,
         "atr": atr14,
         "adx": adx14,
@@ -187,16 +203,20 @@ def compute_all(df: pd.DataFrame) -> dict:
         "minus_di": minus_di,
         "supertrend": st,
         "st_direction": st_dir,
+        "volume": volume,
         # Latest scalar values
         "last": {
             "ema8": float(ema8[-1]),
             "ema21": float(ema21[-1]),
             "ema55": float(ema55[-1]),
+            "ema200": float(ema200[-1]),
             "rsi": float(rsi14[-1]),
             "atr": float(atr14[-1]),
             "adx": float(adx14[-1]),
             "plus_di": float(plus_di[-1]),
             "minus_di": float(minus_di[-1]),
             "st_direction": int(st_dir[-1]),
+            "macro_trend_7d": macro_trend_7d,   # +1 = uptrend (7d), -1 = downtrend
+            "macro_trend_3d": macro_trend_3d,   # +1 = uptrend (3d), -1 = downtrend
         },
     }

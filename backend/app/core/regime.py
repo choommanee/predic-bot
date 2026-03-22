@@ -16,15 +16,20 @@ class MarketRegime:
 
 def classify(smc_4h: Any, indicators: dict) -> MarketRegime:
     ind = indicators.get("last", {}) if indicators else {}
+    # Use 4H bias if available; fall back to the SMCResult passed as smc_4h
+    # (in backtest, the 1-minute SMCResult is passed when no 4H data exists)
     bias = (getattr(smc_4h, "bias", "NEUTRAL") if smc_4h else "NEUTRAL") or "NEUTRAL"
     adx = float(ind.get("adx") or 0)
     st = int(ind.get("supertrend_direction") or 0)
 
-    if bias == "BULLISH" and adx > 25 and st == 1:
-        return MarketRegime("TRENDING_UP", ["smc", "momentum"], f"Strong uptrend — ADX {adx:.0f}")
-    elif bias == "BEARISH" and adx > 25 and st == -1:
-        return MarketRegime("TRENDING_DOWN", ["smc", "momentum"], f"Strong downtrend — ADX {adx:.0f}")
-    elif adx < 20:
-        return MarketRegime("RANGING", ["grid", "martingale"], f"Ranging — ADX {adx:.0f}")
+    # Strong trend — needs bias + ADX + SuperTrend confirmation
+    if bias == "BULLISH" and adx > 20 and st >= 0:
+        return MarketRegime("TRENDING_UP", ["smc", "momentum"], f"Uptrend — ADX {adx:.0f}")
+    elif bias == "BEARISH" and adx > 20 and st <= 0:
+        return MarketRegime("TRENDING_DOWN", ["smc", "momentum"], f"Downtrend — ADX {adx:.0f}")
+    elif adx < 18:
+        # Ranging: grid + martingale + momentum (mean-reversion)
+        return MarketRegime("RANGING", ["grid", "martingale", "momentum"], f"Ranging — ADX {adx:.0f}")
     else:
-        return MarketRegime("TRANSITIONING", ["smc", "martingale"], f"Transitioning — ADX {adx:.0f}")
+        # Transitioning: all strategies allowed
+        return MarketRegime("TRANSITIONING", ["smc", "martingale", "momentum"], f"Transitioning — ADX {adx:.0f}")
