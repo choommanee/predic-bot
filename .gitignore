@@ -40,6 +40,6 @@ Thumbs.db
 # Alembic
 # (keep versions tracked)
 
-# Static build output (generated)
-backend/app/static/assets/
-backend/app/static/index.html
+# Static build output is committed so Railway can serve without rebuild step
+# backend/app/static/assets/
+# backend/app/static/index.html
