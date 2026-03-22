@@ -108,6 +108,7 @@ class TradingEngine:
         self._agg_signal: AggregatedSignal | None = None
         self._mtf_last_refresh: float = 0.0
         self._db_factory = None
+        self._last_equity: float = 0.0   # latest known account equity
 
     # ─────────────────── Lifecycle ───────────────────
 
@@ -307,6 +308,7 @@ class TradingEngine:
 
                 balance = await self.exchange.fetch_balance()
                 equity = balance["total"]
+                self._last_equity = equity
                 self.risk.update_equity_peak(equity)
                 allowed, reason = self.risk.can_trade(equity)
 
@@ -692,7 +694,7 @@ class TradingEngine:
                 "worst_trade":       metrics.worst_trade,
                 "by_strategy":       metrics.by_strategy,
             },
-            "risk": self.risk.risk_summary(self._last_price or 1.0),
+            "risk": self.risk.risk_summary(self._last_equity or self.risk.state.peak_equity or 10000.0),
             "trailing_active": len(self.trailing),
         }
         if self._last_event:
@@ -748,7 +750,7 @@ class TradingEngine:
                 "total_pnl":        metrics.total_pnl,
                 "daily_pnl":        metrics.daily_pnl,
             },
-            "risk": self.risk.risk_summary(price),
+            "risk": self.risk.risk_summary(self._last_equity or 10000.0),
             "strategy_stats": {
                 name: {
                     "active":      s.state.active,

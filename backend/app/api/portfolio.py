@@ -41,7 +41,9 @@ async def get_stats(engine=Depends(get_engine)):
 
 @router.get("/risk")
 async def get_risk(engine=Depends(get_engine)):
-    return engine.risk.risk_summary(engine._last_price or 1.0)
+    # Use cached equity (set during data_loop) — not BTC price
+    equity = getattr(engine, "_last_equity", 0) or engine.risk.state.peak_equity or 10000.0
+    return engine.risk.risk_summary(equity)
 
 
 @router.get("/trailing")
