@@ -20,6 +20,7 @@ from .core.engine import TradingEngine
 from .api.auth import router as auth_router
 from .api.trading import router as trading_router
 from .api.signals import router as signals_router
+from .api.settings import router as settings_router
 from .api.websocket import manager
 from .notifications.telegram import TelegramNotifier
 
@@ -61,9 +62,18 @@ async def on_startup():
         logger.error("Database init failed (app will still start): %s", exc)
 
     try:
-        telegram = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
+        # Load config from DB (with env fallback) for engine init
+        from .core.bot_config import load_bot_config
+        from .database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            bot_cfg = await load_bot_config(db)
 
-        engine = TradingEngine()
+        telegram = TelegramNotifier(
+            bot_cfg.get("telegram_bot_token", settings.telegram_bot_token),
+            bot_cfg.get("telegram_chat_id", settings.telegram_chat_id),
+        )
+
+        engine = TradingEngine(override_config=bot_cfg)
 
         async def broadcast_to_ws(event: dict):
             await manager.broadcast(event)
@@ -97,6 +107,7 @@ async def on_shutdown():
 app.include_router(auth_router)
 app.include_router(trading_router)
 app.include_router(signals_router)
+app.include_router(settings_router)
 
 
 # ─────────────────── WebSocket ───────────────────

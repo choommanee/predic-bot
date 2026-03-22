@@ -37,34 +37,43 @@ class TradingEngine:
     5. Broadcast events to WebSocket + Telegram
     """
 
-    def __init__(self) -> None:
+    def __init__(self, override_config: dict | None = None) -> None:
         settings = get_settings()
         self.settings = settings
-        self.symbol = settings.trading_symbol
-        self.mode = settings.trading_mode  # paper | signal | auto | both
+
+        # Merge override_config (from DB) on top of env settings
+        cfg = override_config or {}
+        self.symbol = cfg.get("trading_symbol", settings.trading_symbol)
+        self.mode = cfg.get("trading_mode", settings.trading_mode)
+
+        api_key = cfg.get("binance_api_key", settings.binance_api_key)
+        secret_key = cfg.get("binance_secret_key", settings.binance_secret_key)
+        testnet = cfg.get("binance_testnet", settings.binance_testnet)
+        base_lot = float(cfg.get("base_lot_size", settings.base_lot_size))
+        max_daily = float(cfg.get("max_daily_loss_usd", settings.max_daily_loss_usd))
+        max_dd = float(cfg.get("max_drawdown_pct", settings.max_drawdown_pct))
+
+        # Store for Claude AI key access
+        self._anthropic_api_key = cfg.get("anthropic_api_key", settings.anthropic_api_key)
 
         # Exchange client
         if self.mode == "paper":
-            self.exchange = PaperBinanceClient(
-                settings.binance_api_key, settings.binance_secret_key, settings.binance_testnet
-            )
+            self.exchange = PaperBinanceClient(api_key, secret_key, testnet)
         else:
-            self.exchange = BinanceClient(
-                settings.binance_api_key, settings.binance_secret_key, settings.binance_testnet
-            )
+            self.exchange = BinanceClient(api_key, secret_key, testnet)
 
         # Risk manager
         self.risk = RiskManager(
-            max_daily_loss_usd=settings.max_daily_loss_usd,
-            max_drawdown_pct=settings.max_drawdown_pct,
-            base_lot_size=settings.base_lot_size,
+            max_daily_loss_usd=max_daily,
+            max_drawdown_pct=max_dd,
+            base_lot_size=base_lot,
         )
 
         # Strategies
         self.strategies = {
-            "martingale": MartingaleStrategy(self.symbol, settings.base_lot_size),
-            "grid": GridStrategy(self.symbol, settings.base_lot_size),
-            "momentum": MomentumStrategy(self.symbol, settings.base_lot_size),
+            "martingale": MartingaleStrategy(self.symbol, base_lot),
+            "grid": GridStrategy(self.symbol, base_lot),
+            "momentum": MomentumStrategy(self.symbol, base_lot),
         }
 
         self._running = False
@@ -116,11 +125,11 @@ class TradingEngine:
 
                 # Run Claude AI if enabled and mode allows
                 ai_result = None
-                if self.settings.anthropic_api_key and self.mode in ("auto", "both"):
+                if self._anthropic_api_key and self.mode in ("auto", "both"):
                     try:
                         ai_result = await asyncio.wait_for(
                             analyze_market(
-                                df, smc_result, indicators, self.symbol, self.settings.anthropic_api_key
+                                df, smc_result, indicators, self.symbol, self._anthropic_api_key
                             ),
                             timeout=15.0,
                         )
