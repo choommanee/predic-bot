@@ -14,11 +14,16 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!lastEvent) return;
-    if (lastEvent.type === "market_update") {
+    if (lastEvent.type === "market_update" || lastEvent.type === "status") {
       setLatestMarket(lastEvent);
       if (lastEvent.signals && lastEvent.signals.length > 0) {
         setEvents((prev) => [...prev.slice(-200), lastEvent]);
       }
+    } else if (lastEvent.type === "price_update") {
+      // Fast price-only update — keep other market data intact
+      setLatestMarket((prev) =>
+        prev ? { ...prev, price: lastEvent.price } : lastEvent
+      );
     }
   }, [lastEvent]);
 

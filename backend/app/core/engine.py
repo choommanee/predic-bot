@@ -82,6 +82,8 @@ class TradingEngine:
         self._cached_df: pd.DataFrame | None = None
         self._cached_indicators: dict = {}
         self._cached_smc: Any = None
+        self._last_price: float = 0.0
+        self._last_event: dict | None = None  # cached for immediate send on WS connect
 
     # ─────────────────── Lifecycle ───────────────────
 
@@ -91,6 +93,7 @@ class TradingEngine:
         self._running = True
         logger.info("TradingEngine started (mode=%s symbol=%s)", self.mode, self.symbol)
         self._tasks = [
+            asyncio.create_task(self._ticker_loop(), name="ticker_loop"),
             asyncio.create_task(self._data_loop(), name="data_loop"),
             asyncio.create_task(self._risk_monitor(), name="risk_monitor"),
         ]
@@ -107,6 +110,26 @@ class TradingEngine:
         self._broadcast_callbacks.append(cb)
 
     # ─────────────────── Loops ───────────────────
+
+    async def _ticker_loop(self) -> None:
+        """Broadcast live price every 5 seconds for real-time dashboard updates."""
+        while self._running:
+            try:
+                ticker = await self.exchange.fetch_ticker(self.symbol)
+                price = float(ticker.get("last") or ticker.get("close") or 0)
+                if price and price != self._last_price:
+                    self._last_price = price
+                    await self._broadcast({
+                        "type": "price_update",
+                        "symbol": self.symbol,
+                        "price": price,
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                    })
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.debug("Ticker loop error: %s", exc)
+            await asyncio.sleep(5)
 
     async def _data_loop(self) -> None:
         """Fetch OHLCV and run strategy every 60s (aligned to candle close)."""
@@ -219,6 +242,8 @@ class TradingEngine:
             await asyncio.sleep(30)
 
     async def _broadcast(self, event: dict) -> None:
+        if event.get("type") == "market_update":
+            self._last_event = event
         for cb in self._broadcast_callbacks:
             try:
                 await cb(event)
@@ -236,16 +261,21 @@ class TradingEngine:
     def get_status(self) -> dict:
         ind = self._cached_indicators.get("last", {})
         smc = self._cached_smc
-        return {
+        base = {
             "mode": self.mode,
             "symbol": self.symbol,
             "running": self._running,
+            "price": self._last_price,
             "strategies": {
                 name: s.state.active for name, s in self.strategies.items()
             },
             "indicators": ind,
             "smc_bias": smc.bias if smc else "NEUTRAL",
         }
+        # Merge last market_update so reconnecting clients get full state
+        if self._last_event:
+            base = {**self._last_event, **base, "type": "status"}
+        return base
 
     # ─────────────────── Event Builder ───────────────────
 
