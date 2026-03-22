@@ -1,29 +1,57 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import axios from "axios";
 
-const STRATEGIES = ["martingale", "grid", "momentum"] as const;
-type Strategy = (typeof STRATEGIES)[number];
 const MODES = ["paper", "signal", "auto", "both"] as const;
 
-export default function BotControl() {
-  const [activeStrategies, setActiveStrategies] = useState<Record<Strategy, boolean>>({
-    martingale: false,
-    grid: false,
-    momentum: false,
-  });
-  const [mode, setMode] = useState("paper");
-  const [busy, setBusy] = useState(false);
+interface StrategyInfo {
+  name: string;
+  active: boolean;
+  open_orders: number;
+  daily_pnl: number;
+  total_pnl: number;
+  params: Record<string, number | string>;
+}
 
-  const toggleStrategy = async (name: Strategy) => {
-    setBusy(true);
-    const newVal = !activeStrategies[name];
+export default function BotControl() {
+  const [strategies, setStrategies] = useState<StrategyInfo[]>([]);
+  const [mode, setMode] = useState("paper");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Load current state from server on mount
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [stratRes, statusRes] = await Promise.all([
+          axios.get("/api/strategies", { withCredentials: true }),
+          axios.get("/api/trading/status", { withCredentials: true }),
+        ]);
+        setStrategies(stratRes.data);
+        if (statusRes.data.mode) setMode(statusRes.data.mode);
+      } catch (err) {
+        console.error("Failed to load bot state", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
+
+  const toggleStrategy = async (name: string, current: boolean) => {
+    setBusy(name);
     try {
-      await axios.post("/api/trading/strategy", { name, active: newVal }, { withCredentials: true });
-      setActiveStrategies((prev) => ({ ...prev, [name]: newVal }));
+      await axios.put(
+        `/api/strategies/${name}`,
+        { active: !current },
+        { withCredentials: true }
+      );
+      setStrategies((prev) =>
+        prev.map((s) => (s.name === name ? { ...s, active: !current } : s))
+      );
     } catch (err) {
       console.error(err);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -35,6 +63,14 @@ export default function BotControl() {
       console.error(err);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="card">
+        <div className="text-xs text-muted animate-pulse">Loading bot state…</div>
+      </div>
+    );
+  }
 
   return (
     <div className="card space-y-4">
@@ -64,19 +100,27 @@ export default function BotControl() {
       <div>
         <p className="text-xs text-muted mb-2">Strategies</p>
         <div className="space-y-2">
-          {STRATEGIES.map((name) => (
-            <div key={name} className="flex items-center justify-between">
-              <span className="text-sm capitalize">{name}</span>
+          {strategies.map((s) => (
+            <div key={s.name} className="flex items-center justify-between">
+              <div className="flex flex-col min-w-0">
+                <span className="text-sm capitalize">{s.name}</span>
+                <span className="text-[10px] text-muted">
+                  {s.open_orders > 0 ? `${s.open_orders} open · ` : ""}
+                  PnL: <span className={s.daily_pnl >= 0 ? "text-success" : "text-danger"}>
+                    {s.daily_pnl >= 0 ? "+" : ""}{s.daily_pnl.toFixed(2)}
+                  </span>
+                </span>
+              </div>
               <button
-                disabled={busy}
-                onClick={() => toggleStrategy(name)}
-                className={`relative w-11 h-6 rounded-full transition-colors ${
-                  activeStrategies[name] ? "bg-accent" : "bg-border"
-                }`}
+                disabled={busy === s.name}
+                onClick={() => toggleStrategy(s.name, s.active)}
+                className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ml-2 ${
+                  s.active ? "bg-accent" : "bg-border"
+                } disabled:opacity-50`}
               >
                 <span
                   className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
-                    activeStrategies[name] ? "translate-x-5" : ""
+                    s.active ? "translate-x-5" : ""
                   }`}
                 />
               </button>

@@ -13,6 +13,13 @@ from ..core.smc import SMCResult
 class GridStrategy(BaseStrategy):
     name = "grid"
 
+    DEFAULT_PARAMS = {
+        "grid_spacing_pips": 50.0,
+        "take_profit_pips": 50.0,
+        "max_orders": 8,
+        "pip_value": 1.0,
+    }
+
     def __init__(
         self,
         symbol: str,
@@ -23,12 +30,22 @@ class GridStrategy(BaseStrategy):
         pip_value: float = 1.0,  # BTCUSDT: ~$1 per pip (1 pip = $1 USDT)
     ) -> None:
         super().__init__(symbol, base_lot)
+        self.grid_spacing_pips = grid_spacing_pips
+        self.take_profit_pips = take_profit_pips
+        self.max_orders = max_orders
+        self.pip_value = pip_value
         self.grid_spacing = grid_spacing_pips * pip_value
         self.take_profit = take_profit_pips * pip_value
-        self.max_orders = max_orders
 
         self._grid_center: float | None = None
         self._placed_levels: Set[int] = set()
+
+    def update_params(self, params: dict) -> None:
+        """Override to recalculate derived attributes after param update."""
+        super().update_params(params)
+        # Recalculate derived values
+        self.grid_spacing = self.grid_spacing_pips * self.pip_value
+        self.take_profit = self.take_profit_pips * self.pip_value
 
     def _price_to_level(self, price: float) -> int:
         if self._grid_center is None:
@@ -96,3 +113,13 @@ class GridStrategy(BaseStrategy):
     def reset(self) -> None:
         self._grid_center = None
         self._placed_levels = set()
+
+    def dump_state(self) -> dict:
+        return {
+            "grid_center": self._grid_center,
+            "placed_levels": list(self._placed_levels),
+        }
+
+    def load_state(self, state: dict) -> None:
+        self._grid_center = state.get("grid_center")
+        self._placed_levels = set(state.get("placed_levels", []))

@@ -14,6 +14,16 @@ from ..core.smc import SMCResult
 class MomentumStrategy(BaseStrategy):
     name = "momentum"
 
+    DEFAULT_PARAMS = {
+        "fast_ema": 8,
+        "slow_ema": 21,
+        "rsi_bull": 55.0,
+        "rsi_bear": 45.0,
+        "atr_tp_mult": 2.0,
+        "atr_sl_mult": 1.5,
+        "cooldown_bars": 5,
+    }
+
     def __init__(
         self,
         symbol: str,
@@ -110,3 +120,13 @@ class MomentumStrategy(BaseStrategy):
             )
 
         return signals
+
+    def dump_state(self) -> dict:
+        return {
+            "last_signal_bar": self._last_signal_bar,
+            "bar_count": self._bar_count,
+        }
+
+    def load_state(self, state: dict) -> None:
+        self._last_signal_bar = state.get("last_signal_bar", -self.cooldown_bars)
+        self._bar_count = state.get("bar_count", 0)

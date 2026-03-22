@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Awaitable
 
@@ -18,6 +19,7 @@ from ..core.claude_ai import analyze_market
 from ..core.risk import RiskManager
 from ..exchange.binance_client import BinanceClient, PaperBinanceClient
 from ..strategies.base import OrderSignal
+from ..strategies.smc import SMCStrategy
 from ..strategies.martingale import MartingaleStrategy
 from ..strategies.grid import GridStrategy
 from ..strategies.momentum import MomentumStrategy
@@ -38,6 +40,7 @@ class TradingEngine:
     3. Evaluate active strategies
     4. Execute orders (real or paper)
     5. Broadcast events to WebSocket + Telegram
+    6. Reconcile open trades (check SL/TP fills)
     """
 
     def __init__(self, override_config: dict | None = None) -> None:
@@ -72,8 +75,9 @@ class TradingEngine:
             base_lot_size=base_lot,
         )
 
-        # Strategies
+        # Strategies (all 4: SMC, Martingale, Grid, Momentum)
         self.strategies = {
+            "smc": SMCStrategy(self.symbol, base_lot),
             "martingale": MartingaleStrategy(self.symbol, base_lot),
             "grid": GridStrategy(self.symbol, base_lot),
             "momentum": MomentumStrategy(self.symbol, base_lot),
@@ -91,7 +95,9 @@ class TradingEngine:
         self._regime: MarketRegime | None = None
         self._agg_signal: AggregatedSignal | None = None
         self._mtf_last_refresh: float = 0.0
-        MTF_REFRESH_INTERVAL = 300  # 5 minutes
+
+        # DB factory — injected by main.py after engine creation
+        self._db_factory = None
 
     # ─────────────────── Lifecycle ───────────────────
 
@@ -104,6 +110,7 @@ class TradingEngine:
             asyncio.create_task(self._ticker_loop(), name="ticker_loop"),
             asyncio.create_task(self._data_loop(), name="data_loop"),
             asyncio.create_task(self._risk_monitor(), name="risk_monitor"),
+            asyncio.create_task(self._reconciliation_loop(), name="reconciliation_loop"),
         ]
 
     async def stop(self) -> None:
@@ -116,6 +123,52 @@ class TradingEngine:
 
     def add_broadcast_callback(self, cb: BroadcastCallback) -> None:
         self._broadcast_callbacks.append(cb)
+
+    def set_db_factory(self, factory) -> None:
+        """Inject DB session factory for persistent storage."""
+        self._db_factory = factory
+
+    async def init_from_db(self, db) -> None:
+        """Load strategy configs and open trades from DB on startup."""
+        from sqlalchemy import select
+        from ..models.strategy_config import StrategyConfig
+        from ..models.trade_execution import TradeExecution
+
+        # Load strategy configs
+        try:
+            result = await db.execute(select(StrategyConfig))
+            configs = result.scalars().all()
+            for cfg in configs:
+                if cfg.name in self.strategies:
+                    strategy = self.strategies[cfg.name]
+                    strategy.state.active = cfg.active
+                    if cfg.params:
+                        strategy.update_params(cfg.params)
+            logger.info("Loaded %d strategy configs from DB", len(configs))
+        except Exception as exc:
+            logger.warning("Could not load strategy configs: %s", exc)
+
+        # Load open trades into strategy state
+        try:
+            result = await db.execute(
+                select(TradeExecution).where(TradeExecution.status == "open")
+            )
+            open_trades = result.scalars().all()
+            for trade in open_trades:
+                strategy = self.strategies.get(trade.strategy)
+                if strategy:
+                    strategy.state.open_orders.append({
+                        "id": trade.id,
+                        "side": trade.side,
+                        "quantity": trade.quantity,
+                        "entry": trade.entry_price,
+                        "level": trade.level,
+                        "sl_order_id": trade.sl_order_id,
+                        "tp_order_id": trade.tp_order_id,
+                    })
+            logger.info("Loaded %d open trades from DB", len(open_trades))
+        except Exception as exc:
+            logger.warning("Could not load open trades: %s", exc)
 
     # ─────────────────── Loops ───────────────────
 
@@ -133,6 +186,9 @@ class TradingEngine:
                         "price": price,
                         "ts": datetime.now(timezone.utc).isoformat(),
                     })
+                    # Check paper SL/TP on every price tick
+                    if self.mode == "paper" and self._cached_smc:
+                        await self._check_paper_sl_tp(price)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
@@ -140,10 +196,16 @@ class TradingEngine:
             await asyncio.sleep(5)
 
     async def _data_loop(self) -> None:
-        """Fetch OHLCV and run strategy every 60s (aligned to candle close)."""
+        """Fetch OHLCV and run strategy every 30s — fires extra on new candle close."""
+        _last_candle_ts: str = ""
         while self._running:
             try:
                 df = await self.exchange.fetch_ohlcv(self.symbol, "1m", 200)
+
+                # Detect new 1-minute candle close — triggers immediate analysis
+                latest_ts = str(df.index[-2]) if len(df) >= 2 else ""
+                new_candle = latest_ts != _last_candle_ts
+                _last_candle_ts = latest_ts
                 self._cached_df = df
 
                 indicators = ind_module.compute_all(df)
@@ -155,7 +217,6 @@ class TradingEngine:
                 current_price = float(df["close"].iloc[-1])
 
                 # Refresh MTF every 5 minutes
-                import time
                 now = time.time()
                 if now - self._mtf_last_refresh > 300:
                     self._mtf_context = await get_mtf_context(
@@ -213,7 +274,7 @@ class TradingEngine:
             except Exception as exc:
                 logger.error("Data loop error: %s", exc, exc_info=True)
 
-            await asyncio.sleep(60)
+            await asyncio.sleep(30)
 
     async def _run_strategies(
         self,
@@ -241,22 +302,182 @@ class TradingEngine:
         return fired
 
     async def _execute_signal(self, signal: OrderSignal) -> None:
-        """Place order on exchange or simulate for paper trading."""
+        """Place order on exchange, persist TradeExecution, place bracket orders."""
         try:
-            if self.mode in ("signal",):
+            if self.mode == "signal":
                 # Signal-only: don't place orders, just broadcast
                 return
 
             order = await self.exchange.create_market_order(
                 self.symbol, signal.side, signal.quantity
             )
+            order_id = order.get("id", f"paper_{int(time.time() * 1000)}")
+
             logger.info(
                 "Order placed: %s %s %.6f @ ~%.4f (%s)",
                 signal.side, self.symbol, signal.quantity,
                 signal.entry_price, signal.strategy,
             )
+
+            # Place bracket orders (SL + TP)
+            bracket = await self.exchange.place_bracket_orders(
+                self.symbol,
+                order_id,
+                signal.side,
+                signal.quantity,
+                signal.stop_loss,
+                signal.take_profit,
+            )
+
+            # Persist to DB
+            if self._db_factory:
+                await self._save_trade_execution(signal, order_id, bracket)
+
         except Exception as exc:
             logger.error("Order execution failed: %s", exc)
+
+    async def _save_trade_execution(self, signal: OrderSignal, order_id: str, bracket: dict) -> None:
+        """Save a new TradeExecution record to the database."""
+        from ..models.trade_execution import TradeExecution
+        try:
+            async with self._db_factory() as db:
+                trade = TradeExecution(
+                    id=order_id,
+                    strategy=signal.strategy,
+                    symbol=self.symbol,
+                    side=signal.side,
+                    quantity=signal.quantity,
+                    entry_price=signal.entry_price,
+                    stop_loss=signal.stop_loss,
+                    take_profit=signal.take_profit,
+                    level=signal.level,
+                    reason=signal.reason,
+                    sl_order_id=bracket.get("sl_order_id"),
+                    tp_order_id=bracket.get("tp_order_id"),
+                    status="open",
+                )
+                db.add(trade)
+                await db.commit()
+        except Exception as exc:
+            logger.error("Failed to save trade execution: %s", exc)
+
+    async def _check_paper_sl_tp(self, current_price: float) -> None:
+        """Paper mode: check if SL or TP has been hit on any open trade."""
+        if not self._db_factory:
+            return
+        from sqlalchemy import select
+        from ..models.trade_execution import TradeExecution
+        from datetime import datetime, timezone
+
+        try:
+            async with self._db_factory() as db:
+                result = await db.execute(
+                    select(TradeExecution).where(TradeExecution.status == "open")
+                )
+                open_trades = result.scalars().all()
+
+                for trade in open_trades:
+                    hit_tp = hit_sl = False
+                    if trade.side == "BUY":
+                        if trade.take_profit and current_price >= trade.take_profit:
+                            hit_tp = True
+                        elif trade.stop_loss and current_price <= trade.stop_loss:
+                            hit_sl = True
+                    else:  # SELL
+                        if trade.take_profit and current_price <= trade.take_profit:
+                            hit_tp = True
+                        elif trade.stop_loss and current_price >= trade.stop_loss:
+                            hit_sl = True
+
+                    if hit_tp or hit_sl:
+                        exit_price = trade.take_profit if hit_tp else trade.stop_loss
+                        mult = 1 if trade.side == "BUY" else -1
+                        pnl = (exit_price - trade.entry_price) * trade.quantity * mult
+
+                        trade.status = "closed"
+                        trade.exit_price = exit_price
+                        trade.pnl = round(pnl, 4)
+                        trade.closed_at = datetime.now(timezone.utc)
+                        await db.commit()
+
+                        strategy = self.strategies.get(trade.strategy)
+                        if strategy:
+                            strategy.on_close(pnl)
+
+                        label = "TP" if hit_tp else "SL"
+                        logger.info(
+                            "Paper %s hit: %s %s pnl=%.4f", label, trade.strategy, trade.id, pnl
+                        )
+                        await self._broadcast({
+                            "type": "trade_closed",
+                            "trade_id": trade.id,
+                            "strategy": trade.strategy,
+                            "exit_price": exit_price,
+                            "pnl": round(pnl, 4),
+                            "reason": label,
+                        })
+        except Exception as exc:
+            logger.debug("Paper SL/TP check error: %s", exc)
+
+    async def _reconciliation_loop(self) -> None:
+        """Every 30s: check if SL/TP orders on exchange have been filled."""
+        while self._running:
+            try:
+                if self.mode != "paper" and self._db_factory:
+                    await self._reconcile_open_trades()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.error("Reconciliation error: %s", exc)
+            await asyncio.sleep(30)
+
+    async def _reconcile_open_trades(self) -> None:
+        """Check exchange for filled SL/TP orders and close matching DB trades."""
+        from sqlalchemy import select
+        from ..models.trade_execution import TradeExecution
+        from datetime import datetime, timezone
+
+        try:
+            open_orders_on_exchange = await self.exchange.fetch_open_orders(self.symbol)
+            open_order_ids = {o["id"] for o in open_orders_on_exchange}
+        except Exception as exc:
+            logger.debug("fetch_open_orders failed: %s", exc)
+            return
+
+        async with self._db_factory() as db:
+            result = await db.execute(
+                select(TradeExecution).where(TradeExecution.status == "open")
+            )
+            open_trades = result.scalars().all()
+
+            for trade in open_trades:
+                # If both SL and TP orders are no longer open, the trade was closed
+                sl_filled = trade.sl_order_id and trade.sl_order_id not in open_order_ids
+                tp_filled = trade.tp_order_id and trade.tp_order_id not in open_order_ids
+
+                if (trade.sl_order_id or trade.tp_order_id) and (sl_filled or tp_filled):
+                    exit_price = self._last_price or trade.entry_price
+                    mult = 1 if trade.side == "BUY" else -1
+                    pnl = (exit_price - trade.entry_price) * trade.quantity * mult
+
+                    trade.status = "closed"
+                    trade.exit_price = exit_price
+                    trade.pnl = round(pnl, 4)
+                    trade.closed_at = datetime.now(timezone.utc)
+                    await db.commit()
+
+                    strategy = self.strategies.get(trade.strategy)
+                    if strategy:
+                        strategy.on_close(pnl)
+
+                    logger.info("Trade reconciled as closed: %s pnl=%.4f", trade.id, pnl)
+                    await self._broadcast({
+                        "type": "trade_closed",
+                        "trade_id": trade.id,
+                        "strategy": trade.strategy,
+                        "exit_price": exit_price,
+                        "pnl": round(pnl, 4),
+                    })
 
     async def _risk_monitor(self) -> None:
         """Monitor risk every 30s, emergency close if limits hit."""
@@ -302,7 +523,14 @@ class TradingEngine:
             "running": self._running,
             "price": self._last_price,
             "strategies": {
-                name: s.state.active for name, s in self.strategies.items()
+                name: {
+                    "active": s.state.active,
+                    "open_orders": len(s.state.open_orders),
+                    "daily_pnl": round(s.state.daily_pnl, 4),
+                    "total_pnl": round(s.state.total_pnl, 4),
+                    "params": s.get_params(),
+                }
+                for name, s in self.strategies.items()
             },
             "indicators": ind,
             "smc_bias": smc.bias if smc else "NEUTRAL",
@@ -370,4 +598,12 @@ class TradingEngine:
                 "confidence": round(self._agg_signal.confidence, 1),
                 "reasons": self._agg_signal.reasons,
             } if self._agg_signal else None,
+            "strategy_stats": {
+                name: {
+                    "active": s.state.active,
+                    "open_orders": len(s.state.open_orders),
+                    "daily_pnl": round(s.state.daily_pnl, 4),
+                }
+                for name, s in self.strategies.items()
+            },
         }

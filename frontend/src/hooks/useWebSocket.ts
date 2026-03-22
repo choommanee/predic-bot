@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 
 export interface MarketEvent {
   type: string;
@@ -43,12 +43,28 @@ export interface MarketEvent {
     confidence: number;
     reasons: string[];
   };
+  strategy_stats?: Record<string, {
+    active: boolean;
+    open_orders: number;
+    daily_pnl: number;
+  }>;
+  // strategy_update event
+  strategy?: string;
+  active?: boolean;
+  params?: Record<string, number | string>;
+  // trade_closed event
+  trade_id?: string;
+  exit_price?: number;
+  pnl?: number;
+  reason?: string;
   message?: string;
 }
 
 export function useWebSocket() {
   const [lastEvent, setLastEvent] = useState<MarketEvent | null>(null);
   const [connected, setConnected] = useState(false);
+  // Incremented on trade_closed so OpenPositions auto-refreshes
+  const [tradeRefreshTick, setTradeRefreshTick] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -62,13 +78,15 @@ export function useWebSocket() {
       ws.onopen = () => setConnected(true);
       ws.onclose = () => {
         setConnected(false);
-        // Reconnect after 3s
         setTimeout(connect, 3000);
       };
       ws.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data) as MarketEvent;
           setLastEvent(data);
+          if (data.type === "trade_closed") {
+            setTradeRefreshTick((n) => n + 1);
+          }
         } catch (_) {}
       };
     }
@@ -77,5 +95,5 @@ export function useWebSocket() {
     return () => wsRef.current?.close();
   }, []);
 
-  return { lastEvent, connected };
+  return { lastEvent, connected, tradeRefreshTick };
 }

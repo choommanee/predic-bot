@@ -10,7 +10,7 @@ from typing import Any
 @dataclass
 class MarketRegime:
     regime: str = "UNKNOWN"
-    active_strategies: list[str] = field(default_factory=lambda: ["martingale", "grid", "momentum"])
+    active_strategies: list[str] = field(default_factory=lambda: ["smc", "martingale", "grid", "momentum"])
     description: str = ""
 
 
@@ -21,10 +21,10 @@ def classify(smc_4h: Any, indicators: dict) -> MarketRegime:
     st = int(ind.get("supertrend_direction") or 0)
 
     if bias == "BULLISH" and adx > 25 and st == 1:
-        return MarketRegime("TRENDING_UP", ["momentum"], f"Strong uptrend — ADX {adx:.0f}")
+        return MarketRegime("TRENDING_UP", ["smc", "momentum"], f"Strong uptrend — ADX {adx:.0f}")
     elif bias == "BEARISH" and adx > 25 and st == -1:
-        return MarketRegime("TRENDING_DOWN", ["momentum"], f"Strong downtrend — ADX {adx:.0f}")
+        return MarketRegime("TRENDING_DOWN", ["smc", "momentum"], f"Strong downtrend — ADX {adx:.0f}")
     elif adx < 20:
         return MarketRegime("RANGING", ["grid", "martingale"], f"Ranging — ADX {adx:.0f}")
     else:
-        return MarketRegime("TRANSITIONING", ["martingale"], f"Transitioning — ADX {adx:.0f}")
+        return MarketRegime("TRANSITIONING", ["smc", "martingale"], f"Transitioning — ADX {adx:.0f}")

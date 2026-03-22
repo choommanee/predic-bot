@@ -14,6 +14,14 @@ from ..core.indicators import calculate_ema
 class MartingaleStrategy(BaseStrategy):
     name = "martingale"
 
+    DEFAULT_PARAMS = {
+        "multiplier": 1.5,
+        "max_levels": 7,
+        "pip_distance": 30.0,
+        "take_profit_pips": 35.0,
+        "pip_value": 0.01,
+    }
+
     def __init__(
         self,
         symbol: str,
@@ -150,3 +158,15 @@ class MartingaleStrategy(BaseStrategy):
         self._direction = None
         self._entry_prices = []
         self._levels = 0
+
+    def dump_state(self) -> dict:
+        return {
+            "direction": self._direction,
+            "entry_prices": self._entry_prices,
+            "levels": self._levels,
+        }
+
+    def load_state(self, state: dict) -> None:
+        self._direction = state.get("direction")
+        self._entry_prices = state.get("entry_prices", [])
+        self._levels = state.get("levels", 0)

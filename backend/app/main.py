@@ -15,12 +15,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from .config import get_settings
-from .database import init_db
+from .database import init_db, AsyncSessionLocal
 from .core.engine import TradingEngine
 from .api.auth import router as auth_router
 from .api.trading import router as trading_router
 from .api.signals import router as signals_router
 from .api.settings import router as settings_router
+from .api.strategies import router as strategies_router
+from .api.trades import router as trades_router
 from .api.websocket import manager
 from .notifications.telegram import TelegramNotifier
 
@@ -56,6 +58,8 @@ async def on_startup():
     global engine, telegram
 
     try:
+        # Import all models so SQLAlchemy knows about them before create_all
+        from .models import User, Trade, Signal, BotSetting, StrategyConfig, TradeExecution  # noqa
         await init_db()
         logger.info("Database initialized")
     except Exception as exc:
@@ -64,7 +68,6 @@ async def on_startup():
     try:
         # Load config from DB (with env fallback) for engine init
         from .core.bot_config import load_bot_config
-        from .database import AsyncSessionLocal
         async with AsyncSessionLocal() as db:
             bot_cfg = await load_bot_config(db)
 
@@ -74,6 +77,13 @@ async def on_startup():
         )
 
         engine = TradingEngine(override_config=bot_cfg)
+
+        # Inject DB session factory for persistent trade storage
+        engine.set_db_factory(AsyncSessionLocal)
+
+        # Load strategy configs and open trades from DB
+        async with AsyncSessionLocal() as db:
+            await engine.init_from_db(db)
 
         async def broadcast_to_ws(event: dict):
             await manager.broadcast(event)
@@ -108,6 +118,8 @@ app.include_router(auth_router)
 app.include_router(trading_router)
 app.include_router(signals_router)
 app.include_router(settings_router)
+app.include_router(strategies_router)
+app.include_router(trades_router)
 
 
 # ─────────────────── WebSocket ───────────────────

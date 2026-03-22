@@ -5,10 +5,12 @@ import TradingChart from "../components/TradingChart";
 import BotControl from "../components/BotControl";
 import SMCPanel from "../components/SMCPanel";
 import SignalLog from "../components/SignalLog";
+import OpenPositions from "../components/OpenPositions";
+import StrategyConfigPanel from "../components/StrategyConfigPanel";
 import { useWebSocket, MarketEvent } from "../hooks/useWebSocket";
 
 export default function Dashboard() {
-  const { lastEvent, connected } = useWebSocket();
+  const { lastEvent, connected, tradeRefreshTick } = useWebSocket();
   const [events, setEvents] = useState<MarketEvent[]>([]);
   const [latestMarket, setLatestMarket] = useState<MarketEvent | null>(null);
 
@@ -24,6 +26,9 @@ export default function Dashboard() {
       setLatestMarket((prev) =>
         prev ? { ...prev, price: lastEvent.price } : lastEvent
       );
+    } else if (lastEvent.type === "trade_closed") {
+      // Append to signal log as a closed trade notification
+      setEvents((prev) => [...prev.slice(-200), lastEvent]);
     }
   }, [lastEvent]);
 
@@ -47,6 +52,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 space-y-4">
             <TradingChart symbol={symbol} />
+            <OpenPositions refreshTrigger={tradeRefreshTick} />
           </div>
           <div className="space-y-4">
             <SMCPanel
@@ -57,6 +63,7 @@ export default function Dashboard() {
               aggSignal={latestMarket?.agg_signal}
             />
             <BotControl />
+            <StrategyConfigPanel />
           </div>
         </div>
 

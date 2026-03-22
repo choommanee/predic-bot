@@ -117,6 +117,65 @@ class BinanceClient:
             symbol, close_side, quantity, {"reduceOnly": True}
         )
 
+    async def fetch_open_orders(self, symbol: str) -> List[dict]:
+        """Return all open orders for a symbol."""
+        orders = await self._exchange.fetch_open_orders(symbol)
+        return [
+            {
+                "id": o["id"],
+                "symbol": o["symbol"],
+                "side": o["side"].upper(),
+                "type": o["type"],
+                "price": float(o.get("price") or 0),
+                "amount": float(o.get("amount") or 0),
+                "status": o["status"],
+            }
+            for o in orders
+        ]
+
+    async def place_bracket_orders(
+        self,
+        symbol: str,
+        entry_order_id: str,
+        side: str,
+        quantity: float,
+        stop_loss: float | None,
+        take_profit: float | None,
+    ) -> dict:
+        """Place SL and TP stop orders after an entry fill. Returns dict with sl_id and tp_id."""
+        close_side = "sell" if side.upper() == "BUY" else "buy"
+        result: dict = {"sl_order_id": None, "tp_order_id": None}
+
+        if stop_loss:
+            try:
+                sl_order = await self._exchange.create_order(
+                    symbol,
+                    "STOP_MARKET",
+                    close_side,
+                    quantity,
+                    params={"stopPrice": stop_loss, "reduceOnly": True, "closePosition": False},
+                )
+                result["sl_order_id"] = sl_order["id"]
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("SL order failed: %s", exc)
+
+        if take_profit:
+            try:
+                tp_order = await self._exchange.create_order(
+                    symbol,
+                    "TAKE_PROFIT_MARKET",
+                    close_side,
+                    quantity,
+                    params={"stopPrice": take_profit, "reduceOnly": True, "closePosition": False},
+                )
+                result["tp_order_id"] = tp_order["id"]
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("TP order failed: %s", exc)
+
+        return result
+
 
 class PaperBinanceClient(BinanceClient):
     """
@@ -167,3 +226,22 @@ class PaperBinanceClient(BinanceClient):
 
     async def close_position(self, symbol: str, side: str, quantity: float) -> dict:
         return await self.create_market_order(symbol, "sell" if side == "BUY" else "buy", quantity)
+
+    async def fetch_open_orders(self, symbol: str) -> List[dict]:
+        return []
+
+    async def place_bracket_orders(
+        self,
+        symbol: str,
+        entry_order_id: str,
+        side: str,
+        quantity: float,
+        stop_loss: float | None,
+        take_profit: float | None,
+    ) -> dict:
+        """Paper: create fake SL/TP order IDs so TradeExecution records are consistent."""
+        base = f"paper_bracket_{entry_order_id}"
+        return {
+            "sl_order_id": f"{base}_sl" if stop_loss else None,
+            "tp_order_id": f"{base}_tp" if take_profit else None,
+        }
