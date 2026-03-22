@@ -22,7 +22,7 @@ from ..database import get_db
 from ..models.user import User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto", truncate_error=False)
 settings = get_settings()
 
 
