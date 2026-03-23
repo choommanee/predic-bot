@@ -20,16 +20,18 @@ def classify(smc_4h: Any, indicators: dict) -> MarketRegime:
     # (in backtest, the 1-minute SMCResult is passed when no 4H data exists)
     bias = (getattr(smc_4h, "bias", "NEUTRAL") if smc_4h else "NEUTRAL") or "NEUTRAL"
     adx = float(ind.get("adx") or 0)
-    st = int(ind.get("supertrend_direction") or 0)
+    # NOTE: key is "st_direction" (not "supertrend_direction")
+    st = int(ind.get("st_direction") or 0)
 
-    # Strong trend — needs bias + ADX + SuperTrend confirmation
+    # Strong trend — Donchian breakout + SMC structure trades
     if bias == "BULLISH" and adx > 20 and st >= 0:
-        return MarketRegime("TRENDING_UP", ["smc", "momentum"], f"Uptrend — ADX {adx:.0f}")
+        return MarketRegime("TRENDING_UP",   ["smc", "donchian", "martingale"], f"Uptrend — ADX {adx:.0f}")
     elif bias == "BEARISH" and adx > 20 and st <= 0:
-        return MarketRegime("TRENDING_DOWN", ["smc", "momentum"], f"Downtrend — ADX {adx:.0f}")
+        return MarketRegime("TRENDING_DOWN", ["smc", "donchian", "martingale"], f"Downtrend — ADX {adx:.0f}")
     elif adx < 18:
-        # Ranging: grid + martingale + momentum (mean-reversion)
-        return MarketRegime("RANGING", ["grid", "martingale", "momentum"], f"Ranging — ADX {adx:.0f}")
+        # Ranging: grid ONLY — martingale gets direction wrong in choppy sideways market
+        # Grid captures both bounces up and down without directional bias
+        return MarketRegime("RANGING", ["grid"], f"Ranging — ADX {adx:.0f}")
     else:
-        # Transitioning: all strategies allowed
-        return MarketRegime("TRANSITIONING", ["smc", "martingale", "momentum"], f"Transitioning — ADX {adx:.0f}")
+        # Transitioning: martingale always active, donchian for momentum
+        return MarketRegime("TRANSITIONING", ["smc", "donchian", "martingale", "grid"], f"Transitioning — ADX {adx:.0f}")

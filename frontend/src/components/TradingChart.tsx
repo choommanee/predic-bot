@@ -12,6 +12,7 @@ export default function TradingChart({ symbol }: Props) {
 
   useEffect(() => {
     if (!containerRef.current) return;
+    let isMounted = true;
 
     const chart = createChart(containerRef.current, {
       layout: {
@@ -42,6 +43,7 @@ export default function TradingChart({ symbol }: Props) {
     axios
       .get("/api/trading/ohlcv?timeframe=5m&limit=150", { withCredentials: true })
       .then((r) => {
+        if (!isMounted) return;
         const candles: CandlestickData[] = r.data.map((c: any) => ({
           time: (new Date(c.timestamp).getTime() / 1000) as Time,
           open: c.open,
@@ -62,6 +64,7 @@ export default function TradingChart({ symbol }: Props) {
     window.addEventListener("resize", handleResize);
 
     return () => {
+      isMounted = false;
       window.removeEventListener("resize", handleResize);
       chart.remove();
     };

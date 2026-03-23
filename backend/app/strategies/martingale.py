@@ -48,12 +48,41 @@ class MartingaleStrategy(BaseStrategy):
         self._cooldown: int = 0        # bars before re-entry after reset
 
     def _determine_direction(self, smc: SMCResult, indicators: dict) -> str | None:
-        """Use SMC bias + EMA alignment to choose BUY/SELL."""
+        """Use macro trend + SMC bias + EMA alignment to choose BUY/SELL."""
         ind = indicators.get("last", {})
-        ema8 = ind.get("ema8", 0)
+        ema8  = ind.get("ema8", 0)
         ema21 = ind.get("ema21", 0)
-        rsi = ind.get("rsi", 50)
+        rsi   = ind.get("rsi", 50)
 
+        # ── RSI EXTREME FILTER (top priority — prevents buying peaks/selling troughs) ─
+        # At RSI > 72: market is overbought — even in uptrend, don't buy (wait for pullback)
+        # At RSI < 28: market is oversold — even in downtrend, don't sell (wait for bounce)
+        if rsi > 72:
+            return None   # overbought — no BUY entries
+        if rsi < 28:
+            return None   # oversold — no SELL entries
+
+        # ── MACRO TREND OVERRIDE ──────────────────────────────────────────
+        # If 7-day AND 3-day both agree on direction, force martingale to align.
+        # Prevents SELL entries during week-long BTC pumps and vice-versa.
+        macro_7d = ind.get("macro_trend_7d", 0)
+        macro_3d = ind.get("macro_trend_3d", 0)
+        if macro_7d == 1 and macro_3d == 1:
+            if ema8 > ema21:
+                return "BUY"   # sustained uptrend + 15m momentum aligned
+            return None        # macro bullish but 15m still falling — wait
+        if macro_7d == -1 and macro_3d == -1:
+            if ema8 < ema21:
+                return "SELL"  # sustained downtrend + 15m momentum aligned
+            return None        # macro bearish but 15m still rising — wait
+
+        # Mixed macro (7d and 3d disagree) → SKIP
+        # In mixed/transitioning market, direction score gives wrong signals
+        # Better to wait for macro alignment than to guess wrong direction
+        if macro_7d != macro_3d:
+            return None
+
+        # Both zero (very early warmup period) → fall back to score system
         bull_score = 0
         bear_score = 0
 
@@ -119,10 +148,18 @@ class MartingaleStrategy(BaseStrategy):
 
             self._direction = direction
             self._levels = 0
-            tp = (
-                current_price + self.take_profit_pips * self.pip_value
+            # ATR-based SL/TP: 1×ATR SL, 1.5×ATR TP → R:R = 1.5:1 (break-even WR = 40%)
+            # Previous: fixed $300 TP vs 2×ATR SL → R:R = 0.38:1 (needed 72% WR — impossible)
+            atr = float(indicators.get("last", {}).get("atr") or current_price * 0.002)
+            sl = (
+                current_price - atr * 1.0
                 if direction == "BUY"
-                else current_price - self.take_profit_pips * self.pip_value
+                else current_price + atr * 1.0
+            )
+            tp = (
+                current_price + atr * 1.5
+                if direction == "BUY"
+                else current_price - atr * 1.5
             )
             signals.append(
                 OrderSignal(
@@ -130,6 +167,7 @@ class MartingaleStrategy(BaseStrategy):
                     side=direction,
                     quantity=self._lot_for_level(0),
                     entry_price=current_price,
+                    stop_loss=sl,
                     take_profit=tp,
                     level=0,
                     reason="SMC+OB initial entry",
