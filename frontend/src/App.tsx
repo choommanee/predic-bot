@@ -3,6 +3,7 @@ import { useAuth } from "./hooks/useAuth";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -20,7 +21,7 @@ export default function App() {
       <Route path="/login" element={user ? <Navigate to="/dashboard" /> : <Login />} />
       <Route
         path="/dashboard"
-        element={user ? <Dashboard /> : <Navigate to="/login" />}
+        element={user ? <ErrorBoundary><Dashboard /></ErrorBoundary> : <Navigate to="/login" />}
       />
       <Route
         path="/settings"
